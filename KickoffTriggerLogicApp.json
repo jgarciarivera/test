@@ -26,7 +26,7 @@
       {
          "type":"Microsoft.Logic/workflows",
          "apiVersion":"2017-07-01",
-         "name":"[parameters('KickoffTriggerLogicAppName')]",
+         "name":"[parameters('kickoffTriggerLogicAppName')]",
          "location":"[parameters('resourceGroupLocation')]",
          "tags":"[parameters('resourceTags')]",
          "properties":{
