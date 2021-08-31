@@ -1,0 +1,101 @@
+{
+   "$schema":"https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+   "contentVersion":"1.0.0.0",
+   "parameters":{
+      "KickoffTriggerLogicAppName":{
+         "defaultValue":"azla-pp-dev-ussc-kickofftrigger",
+         "type":"string"
+      },
+      "resourceGroup": {
+         "type": "string"
+      },
+      "resourceGroupLocation":{
+         "type":"string"
+      },
+      "resourceTags":{
+         "type":"object"
+      },
+      "hours":{
+         "type":"string"
+      }
+   },
+   "variables":{
+      
+   },
+   "resources":[
+      {
+         "type":"Microsoft.Logic/workflows",
+         "apiVersion":"2017-07-01",
+         "name":"[parameters('KickoffTriggerLogicAppName')]",
+         "location":"[parameters('resourceGroupLocation')]",
+         "tags":"[parameters('resourceTags')]",
+         "properties":{
+            "state":"Enabled",
+            "definition":{
+               "$schema":"https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+               "actions":{
+                  "Send_message":{
+                     "inputs":{
+                        "body":{
+                        "ContentData": "@{base64('{ \"BatchType\" : \"MorningBatch\" }')}",
+                        "ContentType":"Application/Json"
+                        },
+                        "host":{
+                           "connection":{
+                              "name":"@parameters('$connections')['servicebus']['connectionId']"
+                           }
+                        },
+                        "method":"post",
+                        "path":"/@{encodeURIComponent(encodeURIComponent('sbt-ais-ussc-kickoffnotify'))}/messages"
+                     },
+                     "runAfter":{
+                        
+                     },
+                     "type":"ApiConnection"
+                  }
+               },
+               "contentVersion":"1.0.0.0",
+               "outputs":{
+                  
+               },
+               "parameters":{
+                  "$connections":{
+                     "defaultValue":{
+                        
+                     },
+                     "type":"Object"
+                  }
+               },
+               "triggers":{
+                  "Recurrence":{
+                     "recurrence":{
+                        "frequency":"Day",
+                        "interval":1,
+                        "schedule":{
+                           "hours":[
+                              "[parameters('hours')]"
+                           ],
+                           "minutes":[
+                              0
+                           ]
+                        }
+                     },
+                     "type":"Recurrence"
+                  }
+               }
+            },
+            "parameters":{
+               "$connections":{
+                  "value":{
+              "servicebus": {
+                "connectionId": "[concat(subscription().id, '/resourceGroups/', parameters('resourceGroup'), '/providers/Microsoft.Web/connections/servicebus')]",
+                "connectionName": "servicebus",
+                "id": "[concat(subscription().id,'/providers/Microsoft.Web/locations/', parameters('resourceGroupLocation'),'/managedApis/servicebus')]"
+                     }
+                  }
+               }
+            }
+         }
+      }
+   ]
+}
