@@ -6,8 +6,8 @@
          "defaultValue":"azla-pp-dev-ussc-kickofftrigger",
          "type":"string"
       },
-      "resourceGroup": {
-         "type": "string"
+      "resourceGroup":{
+         "type":"string"
       },
       "resourceGroupLocation":{
          "type":"string"
@@ -37,8 +37,8 @@
                   "Send_message":{
                      "inputs":{
                         "body":{
-                        "ContentData": "@{base64('{ \"BatchType\" : \"MorningBatch\" }')}",
-                        "ContentType":"Application/Json"
+                           "ContentData":"@{base64('{ \"BatchType\" : \"MorningBatch\" }')}",
+                           "ContentType":"Application/Json"
                         },
                         "host":{
                            "connection":{
@@ -87,10 +87,10 @@
             "parameters":{
                "$connections":{
                   "value":{
-              "servicebus": {
-                "connectionId": "[concat(subscription().id, '/resourceGroups/', parameters('resourceGroup'), '/providers/Microsoft.Web/connections/servicebus')]",
-                "connectionName": "servicebus",
-                "id": "[concat(subscription().id,'/providers/Microsoft.Web/locations/', parameters('resourceGroupLocation'),'/managedApis/servicebus')]"
+                     "servicebus":{
+                        "connectionId":"[concat(subscription().id, '/resourceGroups/', parameters('resourceGroup'), '/providers/Microsoft.Web/connections/servicebus')]",
+                        "connectionName":"servicebus",
+                        "id":"[concat(subscription().id,'/providers/Microsoft.Web/locations/', parameters('resourceGroupLocation'),'/managedApis/servicebus')]"
                      }
                   }
                }
