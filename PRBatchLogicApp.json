@@ -1,0 +1,401 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "PRBatchLogicAppName": {
+      "defaultValue": "azla-pp-dev-ussc-PRBatch",
+      "type": "string"
+    },
+    "resourceGroup": {
+      "type": "string"
+    },
+    "resourceGroupLocation": {
+      "type": "string"
+    },
+    "resourceGroupSubscriptionId": {
+      "type": "string"
+    },
+    "resourceTags": {
+      "type": "object"
+    }
+  },
+  "variables": {},
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2017-07-01",
+      "name": "[parameters('PRBatchLogicAppName')]",
+      "location": "[parameters('resourceGroupLocation')]",
+      "tags": "[parameters('resourceTags')]",
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            },
+            "_PRbatchNotifyTopicName": {
+              "type": "String"
+            },
+            "_PRbatchStatusTopicName": {
+              "type": "String"
+            }
+          },
+          "triggers": {
+            "Nightly_Recurrence": {
+              "recurrence": {
+                "frequency": "Day",
+                "interval": 1,
+                "schedule": {
+                  "hours": [
+                    "1"
+                  ],
+                  "minutes": [
+                    0
+                  ]
+                }
+              },
+              "type": "Recurrence"
+            }
+          },
+          "actions": {
+            "App_Scope": {
+              "actions": {
+                "Compose_Batch_Pricing_Requests_Message": {
+                  "runAfter": {
+                    "For_Each_Pricing_Request": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@variables('myPricingRequestsArray')"
+                },
+                "Execute_a_SOQL_query": {
+                  "runAfter": {},
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "query": "SELECT Id, Opportunity_ID__c, Pricing_Due_Date__c\nFROM Pricing_Request__c\nWHERE HU_Status_Pricing_Desk_Use_Only_PR__c = 'Ready To Price'\nAND Related_Opportunity__r.StageName IN ('Deal Attributes','Credit & Pricing','Contracting')\nAND HU_Status_Timestamp__c >= LAST_N_MONTHS:6\nAND Pricing_Due_Date__c >= LAST_N_DAYS:30\nAND Pricing_Due_Date__c <= NEXT_N_DAYS:30\nAND Related_Opportunity__r.Term_Start_Date__c >= THIS_MONTH\nAND Related_Opportunity__c IN (SELECT Opportunity__c FROM LDC_Account_Number__c)\nORDER BY Pricing_Due_Date__c\nLIMIT 1"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['salesforce']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/soql/executesoqlquery"
+                  }
+                },
+                "For_Each_Pricing_Request": {
+                  "foreach": "@body('Parse_JSON')?['records']",
+                  "actions": {
+                    "Append_to_myPricingRequestsArray_variable": {
+                      "runAfter": {
+                        "Compose_Pricing_Request": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "AppendToArrayVariable",
+                      "inputs": {
+                        "name": "myPricingRequestsArray",
+                        "value": "@outputs('Compose_Pricing_Request')"
+                      }
+                    },
+                    "Compose_Pricing_Request": {
+                      "runAfter": {},
+                      "type": "Compose",
+                      "inputs": {
+                        "Id": "@{items('For_Each_Pricing_Request')?['Id']}",
+                        "OpportunityNumber": "@{items('For_Each_Pricing_Request')?['Opportunity_ID__c']}"
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Parse_JSON": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Foreach",
+                  "runtimeConfiguration": {
+                    "concurrency": {
+                      "repetitions": 1
+                    }
+                  }
+                },
+                "Parse_JSON": {
+                  "runAfter": {
+                    "Execute_a_SOQL_query": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "ParseJson",
+                  "inputs": {
+                    "content": "@body('Execute_a_SOQL_query')",
+                    "schema": {
+                      "properties": {
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "nextRecordsUrl": {},
+                        "records": {
+                          "items": {
+                            "properties": {
+                              "Id": {
+                                "type": "string"
+                              },
+                              "Opportunity_ID__c": {
+                                "type": "string"
+                              },
+                              "attributes": {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  },
+                                  "url": {
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "attributes",
+                              "Id",
+                              "Opportunity_ID__c"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "totalSize": {
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "Send_Batch_Pricing_Request_message_to_topic_sbt-ais-ussc-prbatchnotify": {
+                  "runAfter": {
+                    "Compose_Batch_Pricing_Requests_Message": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "ContentData": "@{base64(outputs('Compose_Batch_Pricing_Requests_Message'))}",
+                      "ContentType": "application/json"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['servicebus']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/@{encodeURIComponent(encodeURIComponent(parameters('_PRbatchNotifyTopicName')))}/messages",
+                    "queries": {
+                      "systemProperties": "None"
+                    }
+                  }
+                },
+                "Send_Success_message_to_topic_sbt-ais-ussc-prbatchstatus": {
+                  "runAfter": {
+                    "Set_myAppResponseMessage_variable": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "ContentData": "@{base64(variables('myAppResponseMessage'))}",
+                      "ContentType": "application/json"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['servicebus']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/@{encodeURIComponent(encodeURIComponent(parameters('_PRbatchStatusTopicName')))}/messages",
+                    "queries": {
+                      "systemProperties": "None"
+                    }
+                  }
+                },
+                "Set_myAppResponseMessage_variable": {
+                  "runAfter": {
+                    "Send_Batch_Pricing_Request_message_to_topic_sbt-ais-ussc-prbatchnotify": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "SetVariable",
+                  "inputs": {
+                    "name": "myAppResponseMessage",
+                    "value": "{\n  \"DateTime\": \"@{convertFromUtc(utcNow(), 'Central Standard Time')},\n  \"ErrorMessage\": \"No Errors.  Run Id: @{workflow()['run']['name']}.\",\n  \"Success\": true\n}"
+                  }
+                }
+              },
+              "runAfter": {
+                "Initialize_myPricingRequestsArray_variable": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Scope"
+            },
+            "Error_Scope": {
+              "actions": {
+                "Condition_-_If_error_from_Parse_JSON": {
+                  "actions": {
+                    "Set_myAppResponseMessage_variable_for_Parse_JSON_error": {
+                      "runAfter": {},
+                      "type": "SetVariable",
+                      "inputs": {
+                        "name": "myAppResponseMessage",
+                        "value": "{\n  \"DateTime\": \"@{convertFromUtc(utcNow(), 'Central Standard Time')},\n  \"ErrorMessage\": \"Critical Failure in PRbatch logic app. See Run Id: @{workflow()['run']['name']}. Operation: @{body('Filter_App_Scope_operation_results_array')[0]['name']}. @{body('Filter_App_Scope_operation_results_array')[0]['error']['message']}\",\n  \"Success\": false\n}"
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Filter_App_Scope_operation_results_array": [
+                      "Succeeded"
+                    ]
+                  },
+                  "else": {
+                    "actions": {
+                      "Set_myAppResponseMessage_variable_for_HTTP_error": {
+                        "runAfter": {},
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "myAppResponseMessage",
+                          "value": "{\n  \"DateTime\": \"@{convertFromUtc(utcNow(), 'Central Standard Time')},\n  \"ErrorMessage\": \"Critical Failure in PRbatch logic app. See Run Id: @{workflow()['run']['name']}. Operation: @{body('Filter_App_Scope_operation_results_array')[0]['name']}. @{body('Filter_App_Scope_operation_results_array')[0]['outputs']['body']['message']}\",\n  \"Success\": false\n}"
+                        }
+                      },
+                      "Set_myAppResponseMessage_variable_for_other_error": {
+                        "runAfter": {
+                          "Set_myAppResponseMessage_variable_for_HTTP_error": [
+                            "Failed"
+                          ]
+                        },
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "myAppResponseMessage",
+                          "value": "{\n  \"DateTime\": \"@{convertFromUtc(utcNow(), 'Central Standard Time')},\n  \"ErrorMessage\": \"Critical Failure in PRbatch logic app. See Run Id: @{workflow()['run']['name']}. Operation: @{body('Filter_App_Scope_operation_results_array')[0]['name']}. @{body('Filter_App_Scope_operation_results_array')[0]['error']['message']}\",\n  \"Success\": false\n}"
+                        }
+                      }
+                    }
+                  },
+                  "expression": {
+                    "and": [
+                      {
+                        "equals": [
+                          "@body('Filter_App_Scope_operation_results_array')[0]['name']",
+                          "Parse_JSON"
+                        ]
+                      }
+                    ]
+                  },
+                  "type": "If"
+                },
+                "Filter_App_Scope_operation_results_array": {
+                  "runAfter": {},
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@result('App_Scope')",
+                    "where": "@or(equals(item()['status'], 'Failed'), equals(item()['status'], 'TimedOut'))"
+                  }
+                },
+                "Send_Failure_message_to_topic_sbt-ais-ussc-prbatchstatus": {
+                  "runAfter": {
+                    "Condition_-_If_error_from_Parse_JSON": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "ContentData": "@{base64(variables('myAppResponseMessage'))}",
+                      "ContentType": "application/json"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['servicebus']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/@{encodeURIComponent(encodeURIComponent(parameters('_PRbatchStatusTopicName')))}/messages",
+                    "queries": {
+                      "systemProperties": "None"
+                    }
+                  }
+                }
+              },
+              "runAfter": {
+                "App_Scope": [
+                  "Failed",
+                  "TimedOut",
+                  "Skipped"
+                ]
+              },
+              "type": "Scope"
+            },
+            "Initialize_myAppResponseMessage_variable": {
+              "runAfter": {},
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "myAppResponseMessage",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "Initialize_myPricingRequestsArray_variable": {
+              "runAfter": {
+                "Initialize_myAppResponseMessage_variable": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "myPricingRequestsArray",
+                    "type": "array"
+                  }
+                ]
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "salesforce": {
+                "connectionId": "[concat('/subscriptions/', parameters('resourceGroupSubscriptionId'), '/resourceGroups/', parameters('resourceGroup'), '/providers/Microsoft.Web/connections/salesforce')]",
+                "connectionName": "salesforce",
+                "id": "[concat('/subscriptions/', parameters('resourceGroupSubscriptionId'),'/providers/Microsoft.Web/locations/', parameters('resourceGroupLocation'),'/managedApis/salesforce')]"
+              },
+              "servicebus": {
+                "connectionId": "[concat('/subscriptions/', parameters('resourceGroupSubscriptionId'), '/resourceGroups/', parameters('resourceGroup'), '/providers/Microsoft.Web/connections/servicebus')]",
+                "connectionName": "servicebus",
+                "id": "[concat('/subscriptions/', parameters('resourceGroupSubscriptionId'),'/providers/Microsoft.Web/locations/', parameters('resourceGroupLocation'),'/managedApis/servicebus')]"
+              }
+            }
+          },
+          "_PRbatchNotifyTopicName": {
+            "value": "sbt-ais-ussc-prbatchnotify"
+          },
+          "_PRbatchStatusTopicName": {
+            "value": "sbt-ais-ussc-prbatchstatus"
+          }
+        }
+      }
+    }
+  ]
+}
